@@ -108,6 +108,16 @@ public:
 
     QObject *rootSegment() const;
 
+    /**
+     * Lays out the visible segments as a nested, squarified treemap of the given size
+     * and publishes the result through each segment's treemap properties.
+     *
+     * @param headerHeight height of the title bar of a folder whose children are shown
+     * @param padding space between a folder's edge and its children
+     * @param spacing space between siblings
+     */
+    Q_INVOKABLE void layoutTreemap(qreal width, qreal height, qreal headerHeight, qreal padding, qreal spacing);
+
 public Q_SLOTS:
     void zoomIn();
     void zoomOut();
@@ -126,8 +136,10 @@ private:
     void colorise();
     void setRingBreadth();
     void findVisibleDepth(const std::shared_ptr<Folder> &dir, uint currentDepth = 0);
-    bool build(const std::shared_ptr<Folder> &dir, uint depth = 0, uint a_start = 0, uint a_end = MAX_DEGREE);
+    bool build(const std::shared_ptr<Folder> &dir, Segment *parent, uint depth = 0, uint a_start = 0, uint a_end = MAX_DEGREE);
     void createFromCache(const std::shared_ptr<Folder> &tree);
+    FileSize treemapMinimumSize() const;
+    void buildTreemap(const std::shared_ptr<Folder> &dir, Segment *parent, uint depth, uint a_start, FileSize minimumSize, int &budget);
 
     QList<QList<Segment *>> m_signature;
 
@@ -141,5 +153,9 @@ private:
     uint m_innerRadius; /// radius of inner circle
 
     uint MAP_2MARGIN;
+
+    // Size of the view the treemap segments were built for.
+    // Which items get a tile depends on it, so they are rebuilt when it changes considerably.
+    QSizeF m_treemapSize{800, 600};
 };
 } // namespace RadialMap

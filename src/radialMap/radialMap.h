@@ -13,6 +13,7 @@
 #include "fileTree.h"
 #include <QColor>
 #include <QObject>
+#include <QRectF>
 #include <QQmlEngine>
 #include <QUrl>
 namespace RadialMap
@@ -34,6 +35,17 @@ public:
 
     Q_PROPERTY(QString uuid MEMBER m_uuid CONSTANT)
     Q_PROPERTY(bool isFilesGroup READ isFilesGroup CONSTANT)
+
+    // Geometry in the treemap, see Map::layoutTreemap().
+    // A segment whose children are laid out inside of it is a container,
+    // its children are drawn below a header of headerHeight.
+    Q_PROPERTY(QRectF treemapRect READ treemapRect NOTIFY treemapChanged)
+    Q_PROPERTY(qreal treemapHeaderHeight READ treemapHeaderHeight NOTIFY treemapChanged)
+    Q_PROPERTY(bool treemapContainer READ isTreemapContainer NOTIFY treemapChanged)
+    // Area of a container taken up by children too small to be shown, relative to the container.
+    Q_PROPERTY(QRectF treemapRemainderRect READ treemapRemainderRect NOTIFY treemapChanged)
+    Q_PROPERTY(qreal treemapRemainderSize READ treemapRemainderSize NOTIFY treemapChanged)
+    Q_SIGNAL void treemapChanged();
 
     Segment(const std::shared_ptr<File> &f, uint s, uint l, bool isFake = false);
     ~Segment() override;
@@ -122,6 +134,46 @@ public:
         return m_file->isFilesGroup();
     }
 
+    [[nodiscard]] const QList<Segment *> &children() const
+    {
+        return m_children;
+    }
+
+    [[nodiscard]] QRectF treemapRect() const
+    {
+        return m_treemapRect;
+    }
+    [[nodiscard]] qreal treemapHeaderHeight() const
+    {
+        return m_treemapHeaderHeight;
+    }
+    [[nodiscard]] bool isTreemapContainer() const
+    {
+        return m_treemapContainer;
+    }
+    [[nodiscard]] QRectF treemapRemainderRect() const
+    {
+        return m_treemapRemainderRect;
+    }
+    [[nodiscard]] qreal treemapRemainderSize() const
+    {
+        return m_treemapRemainderSize;
+    }
+
+    void setTreemapGeometry(const QRectF &rect, qreal headerHeight, bool container, const QRectF &remainderRect = {}, qreal remainderSize = 0)
+    {
+        if (m_treemapRect == rect && m_treemapHeaderHeight == headerHeight && m_treemapContainer == container && m_treemapRemainderRect == remainderRect
+            && m_treemapRemainderSize == remainderSize) {
+            return;
+        }
+        m_treemapRect = rect;
+        m_treemapHeaderHeight = headerHeight;
+        m_treemapContainer = container;
+        m_treemapRemainderRect = remainderRect;
+        m_treemapRemainderSize = remainderSize;
+        Q_EMIT treemapChanged();
+    }
+
     friend class Map;
     friend class Builder;
 
@@ -138,6 +190,14 @@ private:
     const std::shared_ptr<File> m_file = nullptr;
     QColor m_pen, m_brush;
     bool m_hasHiddenChildren = false;
+    // The segments one level further out that belong to this one.
+    // Not owned, the Map owns all segments.
+    QList<Segment *> m_children;
+    QRectF m_treemapRect;
+    qreal m_treemapHeaderHeight = 0;
+    bool m_treemapContainer = false;
+    QRectF m_treemapRemainderRect;
+    qreal m_treemapRemainderSize = 0;
     const bool m_fake;
     const QString m_uuid;
 };

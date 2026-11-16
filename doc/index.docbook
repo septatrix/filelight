@@ -87,6 +87,12 @@ prevents &filelight; from scanning removable media (&eg; &CD-ROM;s).</para>
 
 <para>The <guilabel>Appearance</guilabel> tab allows you to configure the way &filelight; looks.</para>
 <para>The <guilabel>Color scheme</guilabel> section is used to choose a color scheme for &filelight;. The color schemes are <guilabel>Rainbow</guilabel>, <guilabel>System Colors</guilabel>, and <guilabel>High Contrast</guilabel>. There is also a <guilabel>Contrast</guilabel> slider to adjust the contrast of the ring segments for easier viewing.</para>
+<para>The <guilabel>Map style</guilabel> option chooses how the map is drawn.
+<guilabel>Radial</guilabel> draws folders as concentric rings around the current folder.
+<guilabel>Treemap</guilabel> draws them as nested rectangles inside the current folder,
+where the area of each rectangle is proportional to its size.
+The treemap uses the available space more efficiently
+and leaves room to show file and folder names directly in the map.</para>
 <para>The <guilabel>Use anti-aliasing</guilabel> check box is used to enable the use of anti-aliasing in the &filelight; view. Selected, this option makes the ring segments have a much cleaner look.</para>
 <para>The <guilabel>Vary label font sizes</guilabel> check box is useful when you have files or folders with long names. This option will change the size of the font to allow it to fit in the view better. When this option is enabled a <guilabel>Minimum font size</guilabel> spinbox becomes available for choosing the smallest size font to scale to.
 <!-- WhatsThisHelp is different, what is correcct? --></para>

@@ -29,6 +29,12 @@ enum MapScheme {
     HighContrast
 };
 Q_ENUM_NS(MapScheme)
+
+enum MapStyle {
+    Radial,
+    Treemap
+};
+Q_ENUM_NS(MapStyle)
 } // namespace Filelight
 
 Q_DECLARE_METATYPE(Filelight::Dirty)
@@ -48,6 +54,7 @@ class Config : public QObject
     Q_PROPERTY(uint contrast MEMBER contrast NOTIFY changed)
     Q_PROPERTY(uint defaultRingDepth MEMBER defaultRingDepth NOTIFY changed)
     Q_PROPERTY(Filelight::MapScheme scheme MEMBER scheme NOTIFY changed)
+    Q_PROPERTY(Filelight::MapStyle mapStyle MEMBER mapStyle NOTIFY changed)
     Q_PROPERTY(QStringList skipList MEMBER skipList NOTIFY changed)
 public:
     static Config *instance();
@@ -70,6 +77,7 @@ public:
     uint defaultRingDepth = 4;
 
     Filelight::MapScheme scheme;
+    Filelight::MapStyle mapStyle = Filelight::Radial;
     QStringList skipList;
 
     const QSet<QByteArray> remoteFsTypes = {"smbfs", "nfs", "afs"};

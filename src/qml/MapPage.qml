@@ -15,6 +15,7 @@ Kirigami.Page {
     id: page
 
     property url url: RadialMap.rootUrl
+    readonly property bool treemap: Config.mapStyle === Filelight.Treemap
     property QQC2.Menu contextMenu
 
     ContextMenuContext{
@@ -321,6 +322,18 @@ Kirigami.Page {
             // software backend at fractional display scales.
 
             property var zOrderedShapes: []
+            // The item under the mouse, see the MouseArea below.
+            property var hoveredItem: null
+
+            // The treemap shares one tooltip between all of its tiles, there can be thousands of them.
+            ShapeToolTip {
+                parent: shapeItem
+                mouseX: mouseyX
+                mouseY: mouseyY
+                readonly property var tile: page.treemap ? shapeItem.hoveredItem : null
+                text: tile ? tile.tooltipText : ""
+                visible: tile ? tile.showTooltip : false
+            }
             property bool hasShapes: zOrderedShapes.length > 0
 
             function objectToArray(object) {
@@ -331,12 +344,18 @@ Kirigami.Page {
                 return newArray;
             }
 
-            onChildrenChanged: {
+            function updateZOrderedShapes() {
                 let children = objectToArray(shapeItem.children)
-                children = children.filter(child => child instanceof Shape);
+                // Shapes of the radial map and rectangles of the treemap.
+                // Children being destroyed may already be null.
+                children = children.filter(child => child && child.segmentUuid !== undefined);
                 children.sort((a, b) => b.z - a.z); // sort by level so the higher level object (the visible one) outscores ones it paints over
                 zOrderedShapes = children
             }
+
+            // The map consists of up to thousands of items, which are added one at a time.
+            // Sorting all of them after every single one is far too slow, so only sort once they are all in.
+            onChildrenChanged: Qt.callLater(updateZOrderedShapes)
 
             function tooltip({ path, size, isFolder, files, totalFiles, isRoot = false }) {
                 let tips = [path, size]
@@ -354,6 +373,56 @@ Kirigami.Page {
                 return tips.join("\n")
             }
 
+            function segmentTooltip(segment) {
+                return tooltip({
+                    isFolder: segment.isFolder(),
+                    path: segment.displayPath(),
+                    size: segment.humanReadableSize(),
+                    files: segment.files(),
+                    totalFiles: RadialMap.numberOfChildren,
+                })
+            }
+
+            function rootTooltip() {
+                return tooltip({
+                    isFolder: true,
+                    path: RadialMap.displayPath,
+                    size: RadialMap.overallSize,
+                    files: RadialMap.numberOfChildren,
+                    totalFiles: RadialMap.numberOfChildren,
+                    isRoot: true,
+                })
+            }
+
+            FontMetrics {
+                id: treemapMetrics
+            }
+
+            function layoutTreemap() {
+                if (!page.treemap || !RadialMap.valid) {
+                    return
+                }
+                RadialMap.layoutTreemap(width, height,
+                                        treemapMetrics.height + Kirigami.Units.smallSpacing * 2, // header
+                                        Kirigami.Units.smallSpacing, // padding
+                                        Kirigami.Units.smallSpacing / 2) // spacing
+            }
+
+            onWidthChanged: layoutTreemap()
+            onHeightChanged: layoutTreemap()
+            Connections {
+                target: RadialMap
+                function onSignatureChanged() {
+                    shapeItem.layoutTreemap()
+                }
+            }
+            Connections {
+                target: page
+                function onTreemapChanged() {
+                    shapeItem.layoutTreemap()
+                }
+            }
+
             Instantiator {
                 id: instantiator
                 model: shapeItem.visible ? RadialMap.signature : undefined
@@ -361,6 +430,7 @@ Kirigami.Page {
                 asynchronous: true // arguable
 
                 Instantiator {
+                    id: levelInstantiator
                     // FIXME weird
                     Component.onCompleted: idx = index // lock index by breaking the binding
                     property int idx: index
@@ -374,29 +444,40 @@ Kirigami.Page {
 
                     active: true
                     model: modelData
+                    delegate: page.treemap ? treemapDelegate : radialDelegate
                     onObjectAdded: (index, object) => shapeItem.children.push(object)
 
-                    delegate: SegmentShape {
-                        // Qt doc: Note: model, index, and modelData roles are not accessible if the delegate contains required properties, unless it has also required properties with matching names.
-                        required property var modelData
+                    readonly property Component radialDelegate: Component {
+                        SegmentShape {
+                            // Qt doc: Note: model, index, and modelData roles are not accessible if the delegate contains required properties, unless it has also required properties with matching names.
+                            required property var modelData
 
-                        readonly property bool segmentHover: hoveredSegment === segment.uuid
+                            readonly property bool segmentHover: hoveredSegment === segment.uuid
 
-                        z: (instantiator.model.length - idx) // reverse order such that more central levels are above. this gives us segment appearance without having to actually paint segments (instead we stack full cicles)
-                        segment: modelData
-                        item: shapeItem
-                        radius: shapeRadius
-                        startAngle: -(modelData.start() / 16)
-                        sweepAngle: -(modelData.length() / 16)
-                        tooltipText: shapeItem.tooltip({
-                            isFolder: segment.isFolder(),
-                            path: segment.displayPath(),
-                            size: segment.humanReadableSize(),
-                            files: segment.files(),
-                            totalFiles: RadialMap.numberOfChildren,
-                        })
-                        showTooltip: !contextMenu && !hoveringListItem && segmentHover && shapeItem.visible
-                        fillColor: segmentHover ? Qt.darker(segment.color) : segment.color
+                            z: (instantiator.model.length - levelInstantiator.idx) // reverse order such that more central levels are above. this gives us segment appearance without having to actually paint segments (instead we stack full cicles)
+                            segment: modelData
+                            item: shapeItem
+                            radius: levelInstantiator.shapeRadius
+                            startAngle: -(modelData.start() / 16)
+                            sweepAngle: -(modelData.length() / 16)
+                            tooltipText: shapeItem.segmentTooltip(segment)
+                            showTooltip: !contextMenu && !hoveringListItem && segmentHover && shapeItem.visible
+                            fillColor: segmentHover ? Qt.darker(segment.color) : segment.color
+                        }
+                    }
+
+                    readonly property Component treemapDelegate: Component {
+                        TreemapItem {
+                            required property var modelData
+
+                            readonly property bool segmentHover: hoveredSegment === segment.uuid
+
+                            z: levelInstantiator.idx + 1 // nested levels are on top of their parents
+                            segment: modelData
+                            hovered: segmentHover
+                            tooltipText: shapeItem.segmentTooltip(segment)
+                            showTooltip: !contextMenu && !hoveringListItem && segmentHover && shapeItem.visible
+                        }
                     }
                 }
             }
@@ -404,7 +485,7 @@ Kirigami.Page {
             CenterShape {
                 id: centerShape
                 z: 500 // on top of everything, arbitrary high number of shapes
-                visible: shapeItem.hasShapes
+                visible: shapeItem.hasShapes && !page.treemap
                 segment: RadialMap.rootSegment
                 segmentUuid: "root"
                 item: shapeItem
@@ -419,17 +500,25 @@ Kirigami.Page {
                 }
                 startAngle: 0
                 sweepAngle: 360
-                tooltipText: shapeItem.tooltip({
-                    isFolder: true,
-                    path: RadialMap.displayPath,
-                    size: RadialMap.overallSize,
-                    files: RadialMap.numberOfChildren,
-                    totalFiles: RadialMap.numberOfChildren,
-                    isRoot: true,
-                })
+                tooltipText: shapeItem.rootTooltip()
                 showTooltip: !contextMenu && !hoveringListItem && hoveredSegment === segmentUuid && shapeItem.visible
                 Kirigami.Theme.colorSet: Kirigami.Theme.View
                 fillColor: Kirigami.Theme.backgroundColor
+            }
+
+            // The treemap's equivalent of the center circle: the frame around everything with the path at the top.
+            TreemapItem {
+                id: treemapRoot
+                z: 0
+                visible: shapeItem.hasShapes && page.treemap && RadialMap.valid
+                isRoot: true
+                segment: RadialMap.rootSegment
+                segmentUuid: "root"
+                hovered: hoveredSegment === segmentUuid
+                tooltipText: shapeItem.rootTooltip()
+                showTooltip: !contextMenu && !hoveringListItem && hovered && shapeItem.visible
+                Kirigami.Theme.colorSet: Kirigami.Theme.View
+                Kirigami.Theme.inherit: false
             }
 
             QQC2.Label {
@@ -456,7 +545,7 @@ Kirigami.Page {
 
             Kirigami.PlaceholderMessage {
                 id: openUrlWarning
-                visible: !centerShape.visible
+                visible: !centerShape.visible && !treemapRoot.visible
                 anchors.centerIn: parent
                 width: parent.width - (Kirigami.Units.largeSpacing * 4)
                 Connections {
@@ -486,7 +575,11 @@ Kirigami.Page {
                 if (child === centerLabel) {
                     continue // not part of the shape objects
                 }
-                const contains = child.contains(Qt.point(mouse.x, mouse.y))
+                if (!child.visible) {
+                    continue // e.g. the root shape of the map style not in use
+                }
+                // Shapes of the radial map span the whole item, rectangles of the treemap do not.
+                const contains = child.contains(child.mapFromItem(shapeItem, mouse.x, mouse.y))
                 if (contains) {
                     return child
                 }
@@ -497,6 +590,7 @@ Kirigami.Page {
         onPositionChanged: mouse => {
             mouse.accepted = false
             const child = findTarget(mouse)
+            shapeItem.hoveredItem = child
             if (child !== null) {
                 hoveringListItem = false
                 mouseyX = mouse.x

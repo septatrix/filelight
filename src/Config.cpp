@@ -30,6 +30,10 @@ void Config::read()
     showFoldersSidebar = config.showFoldersSidebar();
     contrast = config.contrast();
     scheme = (Filelight::MapScheme)config.scheme();
+    // The setting is stored as a plain integer.
+    // Map anything unknown, e.g. a style written by a newer version, to the default
+    // instead of carrying an invalid enum value around.
+    mapStyle = config.mapStyle() == Filelight::Treemap ? Filelight::Treemap : Filelight::Radial;
     skipList = config.skipList();
 
     Q_EMIT changed();
@@ -46,6 +50,7 @@ void Config::write() const
     config.setContrast(contrast);
     config.setScheme((int)scheme); // TODO: make the enum belong to a qwidget,
     // and use magic macros to make it save this properly
+    config.setMapStyle((int)mapStyle);
     config.setSkipList(skipList);
 
     config.save();

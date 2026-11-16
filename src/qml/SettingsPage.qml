@@ -46,6 +46,31 @@ QQC2.Page {
             Layout.margins: Kirigami.Units.largeSpacing
 
             QQC2.ComboBox {
+                Kirigami.FormData.label: i18nc("@label:listbox", "Map style:")
+
+                Layout.preferredWidth: colorCombobox.implicitWidth
+
+                textRole: "text"
+                valueRole: "value"
+                model: [
+                    {
+                        text: i18nc("@item:inlistbox Style of the graph view, concentric rings", "Radial"),
+                        value: Filelight.Radial
+                    },
+                    {
+                        text: i18nc("@item:inlistbox Style of the graph view, nested rectangles", "Treemap"),
+                        value: Filelight.Treemap
+                    }
+                ]
+                Component.onCompleted: currentIndex = indexOfValue(Config.mapStyle)
+                onActivated: {
+                    Config.mapStyle = currentValue
+                    // The styles show different items, as they need different amounts of room.
+                    RadialMap.refresh(Filelight.Dirty.Layout)
+                }
+            }
+
+            QQC2.ComboBox {
                 id: colorCombobox
 
                 Kirigami.FormData.label: i18nc("@title:group", "Colors:")

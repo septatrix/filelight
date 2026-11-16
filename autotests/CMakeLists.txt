@@ -25,6 +25,7 @@ if(CMAKE_SYSTEM_NAME MATCHES "Linux")
     ecm_add_test(localListerTest.cpp TEST_NAME localListerTest LINK_LIBRARIES Qt::Test filelightInternal)
 endif()
 ecm_add_test(scanManagerTest.cpp TEST_NAME scanManagerTest LINK_LIBRARIES Qt::Test filelightInternal)
+ecm_add_test(treemapTest.cpp TEST_NAME treemapTest LINK_LIBRARIES Qt::Test filelightInternal)
 
 ecm_add_test(mapUpdateTest.cpp
     ../src/radialMap/map.cpp ../src/radialMap/map.h

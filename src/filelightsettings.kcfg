@@ -33,6 +33,10 @@ SPDX-License-Identifier: BSD-2-Clause
       <label>Color Scheme</label>
       <default>0</default>
     </entry>
+    <entry name="mapStyle" type="Int">
+      <label>Map style</label>
+      <default>0</default>
+    </entry>
     <entry name="skipList" type="PathList">
       <label>Do not scan these folders</label>
       <default>/dev,/proc,/sys,/root</default>

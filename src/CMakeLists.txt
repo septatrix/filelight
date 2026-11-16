@@ -23,6 +23,7 @@ add_library(filelightInternal STATIC
     Config.cpp
     localLister.cpp
     remoteLister.cpp
+    treemap.cpp
     fileTree.h
     directoryIterator.h
     fileCleaner.h
@@ -30,6 +31,7 @@ add_library(filelightInternal STATIC
     Config.h
     localLister.h
     remoteLister.h
+    treemap.h
 )
 ecm_qt_declare_logging_category(filelightInternal
     HEADER filelight_debug.h

@@ -13,6 +13,7 @@
         <file>GlobalMenu.qml</file>
         <file>SegmentShape.qml</file>
         <file>CenterShape.qml</file>
+        <file>TreemapItem.qml</file>
         <file>SettingsPage.qml</file>
         <file>ShapeToolTip.qml</file>
     </qresource>
