@@ -331,8 +331,9 @@ Kirigami.Page {
                 mouseX: mouseyX
                 mouseY: mouseyY
                 readonly property var tile: page.treemap ? shapeItem.hoveredItem : null
-                text: tile ? tile.tooltipText : ""
-                visible: tile ? tile.showTooltip : false
+                // Only computed for the tile under the mouse.
+                text: tile ? (tile.isRoot ? shapeItem.rootTooltip() : shapeItem.segmentTooltip(tile.segment)) : ""
+                visible: tile ? (tile.hovered && !contextMenu && !hoveringListItem && shapeItem.visible) : false
             }
             property bool hasShapes: zOrderedShapes.length > 0
 
@@ -475,8 +476,6 @@ Kirigami.Page {
                             z: levelInstantiator.idx + 1 // nested levels are on top of their parents
                             segment: modelData
                             hovered: segmentHover
-                            tooltipText: shapeItem.segmentTooltip(segment)
-                            showTooltip: !contextMenu && !hoveringListItem && segmentHover && shapeItem.visible
                         }
                     }
                 }
@@ -515,8 +514,6 @@ Kirigami.Page {
                 segment: RadialMap.rootSegment
                 segmentUuid: "root"
                 hovered: hoveredSegment === segmentUuid
-                tooltipText: shapeItem.rootTooltip()
-                showTooltip: !contextMenu && !hoveringListItem && hovered && shapeItem.visible
                 Kirigami.Theme.colorSet: Kirigami.Theme.View
                 Kirigami.Theme.inherit: false
             }

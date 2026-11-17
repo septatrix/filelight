@@ -9,6 +9,7 @@
 #pragma once
 
 #include <QPixmap>
+#include <QTimer>
 #include <QRectF>
 #include <QString>
 
@@ -139,7 +140,8 @@ private:
     bool build(const std::shared_ptr<Folder> &dir, Segment *parent, uint depth = 0, uint a_start = 0, uint a_end = MAX_DEGREE);
     void createFromCache(const std::shared_ptr<Folder> &tree);
     FileSize treemapMinimumSize() const;
-    void buildTreemap(const std::shared_ptr<Folder> &dir, Segment *parent, uint depth, uint a_start, FileSize minimumSize, int &budget);
+    void buildTreemap();
+    bool placeTreemap(Segment *segment, const QRectF &rect, uint childDepth, bool build, FileSize minimumSize, int &budget);
 
     QList<QList<Segment *>> m_signature;
 
@@ -154,8 +156,14 @@ private:
 
     uint MAP_2MARGIN;
 
-    // Size of the view the treemap segments were built for.
-    // Which items get a tile depends on it, so they are rebuilt when it changes considerably.
-    QSizeF m_treemapSize{800, 600};
+    // The treemap only creates segments for the tiles it shows,
+    // so which segments exist depends on the size of the view and the style.
+    QSizeF m_treemapSize;
+    QSizeF m_treemapBuiltSize;
+    qreal m_treemapHeaderHeight = 0;
+    qreal m_treemapPadding = 0;
+    qreal m_treemapSpacing = 0;
+    // Rebuilding recreates every tile in the scene, so do it once resizing settled.
+    QTimer m_treemapRebuildTimer;
 };
 } // namespace RadialMap

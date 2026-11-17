@@ -9,6 +9,7 @@
 #include <QTest>
 
 #include <algorithm>
+#include <cmath>
 #include <functional>
 
 class MapUpdateTest : public QObject
@@ -172,6 +173,56 @@ private Q_SLOTS:
         map->layoutTreemap(4000, 4000, 20, 4, 2);
         QVERIFY(countSegments() > 0);
         QVERIFY(countSegments() <= 2000);
+    }
+
+    void treemapOnlyCreatesShownTiles()
+    {
+        Config::instance()->mapStyle = Filelight::Treemap;
+        auto restoreStyle = qScopeGuard([] {
+            Config::instance()->mapStyle = Filelight::Radial;
+        });
+
+        const auto root = std::make_shared<Folder>("root/");
+        for (int i = 0; i < 20; ++i) {
+            const auto folder = std::make_shared<Folder>(QByteArray("folder-" + QByteArray::number(i) + "/").constData());
+            // Sizes on a fine geometric scale, so some tiles are always close to the minimum size.
+            for (int j = 0; j < 40; ++j) {
+                folder->append(QByteArray("file-" + QByteArray::number(j)).constData(), FileSize(1000 * std::pow(1.15, j)));
+            }
+            root->append(folder);
+        }
+
+        auto map = RadialMap::Map::instance();
+        auto segments = [map] {
+            QList<RadialMap::Segment *> all;
+            for (const auto &ring : map->rawSignature()) {
+                all += ring;
+            }
+            return all;
+        };
+        auto allShown = [&segments] {
+            const auto all = segments();
+            return std::all_of(all.cbegin(), all.cend(), [](const RadialMap::Segment *segment) {
+                return !segment->treemapRect().isEmpty();
+            });
+        };
+
+        map->make(root);
+        map->layoutTreemap(1000, 800, 20, 4, 2);
+        const auto large = segments().size();
+        QVERIFY(large > 20); // the files inside the folders are shown
+        QVERIFY(allShown());
+
+        // Shrinking a little moves the existing tiles, and some no longer fit.
+        map->layoutTreemap(800, 700, 20, 4, 2);
+        // Once resizing settled, they are dropped.
+        QTRY_VERIFY(allShown());
+        QVERIFY(segments().size() < large);
+
+        // Growing again brings them back.
+        map->layoutTreemap(1000, 800, 20, 4, 2);
+        QTRY_COMPARE(segments().size(), large);
+        QVERIFY(allShown());
     }
 };
 

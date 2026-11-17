@@ -45,6 +45,14 @@ RadialMap::Map::Map()
     resize(QRectF());
 
     qGuiApp->installEventFilter(this);
+
+    m_treemapRebuildTimer.setSingleShot(true);
+    m_treemapRebuildTimer.setInterval(250);
+    connect(&m_treemapRebuildTimer, &QTimer::timeout, this, [this] {
+        if (m_root && Config::instance()->mapStyle == Filelight::Treemap) {
+            make(m_root, true);
+        }
+    });
 }
 
 bool RadialMap::Map::eventFilter(QObject *obj, QEvent *event)
@@ -155,6 +163,7 @@ void RadialMap::Map::make(const std::shared_ptr<Folder> &tree, bool refresh)
             m_rootSegment->file()->setSegment({});
         }
         m_rootSegment = make_shared_qobject<Segment>(tree, 0, MAX_DEGREE);
+        m_rootSegment->m_treemapExpandable = true;
 
         setRingBreadth();
 
@@ -167,8 +176,7 @@ void RadialMap::Map::make(const std::shared_ptr<Folder> &tree, bool refresh)
         }
 
         if (Config::instance()->mapStyle == Filelight::Treemap) {
-            int budget = TREEMAP_MAX_TILES;
-            buildTreemap(tree, m_rootSegment.get(), 0, 0, treemapMinimumSize(), budget);
+            buildTreemap();
         } else {
             build(tree, m_rootSegment.get());
         }
@@ -524,58 +532,21 @@ FileSize RadialMap::Map::treemapMinimumSize() const
     return minimumSize;
 }
 
-void RadialMap::Map::buildTreemap(const std::shared_ptr<Folder> &dir, Segment *parent, const uint depth, uint a_start, const FileSize minimumSize, int &budget)
+void RadialMap::Map::buildTreemap()
 {
-    if (m_root->size() == 0) {
+    m_treemapRebuildTimer.stop();
+    if (m_treemapSize.isEmpty() || m_root->size() == 0) {
+        // Nothing to lay out yet, the view will tell its size.
+        m_treemapBuiltSize = QSizeF();
         return;
     }
-
-    struct Entry {
-        std::shared_ptr<File> file;
-        uint start;
-        uint length;
-    };
-    std::vector<Entry> entries;
-    for (const auto &file : dir->files) {
-        // The angle only determines the color.
-        // Advance it for hidden items too, so colors do not shift when the view is resized.
-        const auto a_len = uint(MAX_DEGREE * (double(file->size()) / double(m_root->size())));
-        if (file->size() >= minimumSize) {
-            entries.push_back({file, a_start, a_len});
-        }
-        a_start += a_len;
-    }
-    // Largest first, so items tied at the minimum size are the ones dropped once the budget runs out.
-    std::stable_sort(entries.begin(), entries.end(), [](const Entry &a, const Entry &b) {
-        return a.file->size() > b.file->size();
-    });
-
-    for (const auto &entry : entries) {
-        if (budget <= 0) {
-            return;
-        }
-        --budget;
-        auto *segment = new Segment(entry.file, entry.start, entry.length);
-        m_signature[depth].append(segment);
-        parent->m_children.append(segment);
-        if (entry.file->isFolder()) {
-            const auto folder = std::static_pointer_cast<Folder>(entry.file);
-            if (depth < m_visibleDepth) {
-                buildTreemap(folder, segment, depth + 1, entry.start, minimumSize, budget);
-            }
-            segment->m_hasHiddenChildren = folder->files.size() > segment->m_children.size();
-        }
-    }
+    int budget = TREEMAP_MAX_TILES;
+    placeTreemap(m_rootSegment.get(), QRectF(QPointF(0, 0), m_treemapSize), 0, true, treemapMinimumSize(), budget);
+    m_treemapBuiltSize = m_treemapSize;
 }
 
 namespace
 {
-struct TreemapStyle {
-    qreal headerHeight;
-    qreal padding;
-    qreal spacing;
-};
-
 void collapseTreemap(RadialMap::Segment *segment, const QPointF &at)
 {
     segment->setTreemapGeometry(QRectF(at, QSizeF(0, 0)), 0, false);
@@ -583,87 +554,164 @@ void collapseTreemap(RadialMap::Segment *segment, const QPointF &at)
         collapseTreemap(child, at);
     }
 }
+} // namespace
 
-void layoutTreemap(RadialMap::Segment *segment, const QRectF &rect, const TreemapStyle &style)
+// Lays out the children of a segment and recurses into them.
+// When building, segments are created for exactly the tiles that are placed,
+// otherwise the existing segments are moved.
+// Returns whether a rebuild would show a different set of tiles.
+bool RadialMap::Map::placeTreemap(Segment *segment, const QRectF &rect, const uint childDepth, const bool build, const FileSize minimumSize, int &budget)
 {
-    const auto &children = segment->children();
+    const auto folder = std::dynamic_pointer_cast<Folder>(segment->file());
     const FileSize size = segment->file()->size();
 
     // Only nest the children if there is room for a header with the name and for the children themselves.
     // Otherwise the folder is shown like a file.
-    const bool container = !children.isEmpty() && size > 0 && rect.width() >= 3 * style.headerHeight && rect.height() >= 2.5 * style.headerHeight;
+    const bool fits = rect.width() >= 3 * m_treemapHeaderHeight && rect.height() >= 2.5 * m_treemapHeaderHeight;
+    const bool container = fits && size > 0 && (build ? segment->m_treemapExpandable : !segment->m_children.isEmpty());
     if (!container) {
         segment->setTreemapGeometry(rect, 0, false);
-        for (auto *child : children) {
+        for (auto *child : std::as_const(segment->m_children)) {
             collapseTreemap(child, rect.center());
         }
-        return;
+        // A rebuild would drop the collapsed children, or show children that now fit.
+        return !build && (!segment->m_children.isEmpty() || (fits && segment->m_treemapExpandable));
     }
 
-    const QRectF content = rect.adjusted(style.padding, style.headerHeight, -style.padding, -style.padding);
+    const QRectF content = rect.adjusted(m_treemapPadding, m_treemapHeaderHeight, -m_treemapPadding, -m_treemapPadding);
 
-    // Squarifying needs the largest items first.
-    QList<RadialMap::Segment *> sorted = children;
-    std::stable_sort(sorted.begin(), sorted.end(), [](const RadialMap::Segment *a, const RadialMap::Segment *b) {
-        return a->file()->size() > b->file()->size();
+    // The items to lay out, largest first as squarifying needs them.
+    struct Item {
+        std::shared_ptr<File> file;
+        Segment *segment;
+        uint start;
+        uint length;
+    };
+    std::vector<Item> items;
+    if (build) {
+        uint a_start = segment->start();
+        for (const auto &file : folder->files) {
+            // The angle only determines the color.
+            // Advance it for hidden items too, so colors do not shift when the view is resized.
+            const auto a_len = uint(MAX_DEGREE * (double(file->size()) / double(m_root->size())));
+            if (file->size() >= minimumSize) {
+                items.push_back({file, nullptr, a_start, a_len});
+            }
+            a_start += a_len;
+        }
+    } else {
+        for (auto *child : std::as_const(segment->m_children)) {
+            items.push_back({child->file(), child, 0, 0});
+        }
+    }
+    std::stable_sort(items.begin(), items.end(), [](const Item &a, const Item &b) {
+        return a.file->size() > b.file->size();
     });
+
     QList<qreal> weights;
-    weights.reserve(sorted.size());
-    FileSize visibleSize = 0;
-    for (const auto *child : std::as_const(sorted)) {
-        weights.append(qreal(child->file()->size()));
-        visibleSize += child->file()->size();
+    weights.reserve(qsizetype(items.size()));
+    FileSize itemsSize = 0;
+    for (const auto &item : items) {
+        weights.append(qreal(item.file->size()));
+        itemsSize += item.file->size();
     }
 
-    // Children without a segment, and those too small to get a tile in this layout,
-    // are gathered in the bottom right corner where the smallest tiles would be.
+    // Items too small to get a tile are gathered in the bottom right corner where the smallest tiles would be.
     // The minimum area includes the spacing, which is taken off every tile.
-    const qreal minimumSide = TREEMAP_MIN_TILE + style.spacing;
-    const qreal hiddenSize = visibleSize < size ? qreal(size - visibleSize) : 0;
-    const auto layout = Treemap::squarify(weights, content, hiddenSize, minimumSide * minimumSide);
+    const qreal minimumSide = TREEMAP_MIN_TILE + m_treemapSpacing;
+    const qreal minimumArea = minimumSide * minimumSide;
+    const qreal hiddenSize = itemsSize < size ? qreal(size - itemsSize) : 0;
+    const auto layout = Treemap::squarify(weights, content, hiddenSize, minimumArea);
 
-    const qreal halfSpacing = style.spacing / 2;
+    const qreal halfSpacing = m_treemapSpacing / 2;
     auto separate = [&](QRectF childRect) {
         // Separate siblings, but never let a rectangle vanish because of it.
-        if (childRect.width() > style.spacing && childRect.height() > style.spacing) {
+        if (childRect.width() > m_treemapSpacing && childRect.height() > m_treemapSpacing) {
             childRect.adjust(halfSpacing, halfSpacing, -halfSpacing, -halfSpacing);
         }
         return childRect;
     };
 
+    bool changed = false;
     FileSize placedSize = 0;
-    for (qsizetype i = 0; i < sorted.size(); ++i) {
-        if (i < layout.placed) {
-            placedSize += sorted[i]->file()->size();
-            layoutTreemap(sorted[i], separate(layout.rects[i]), style);
-        } else {
-            collapseTreemap(sorted[i], layout.remainder.center());
+    for (qsizetype i = 0; i < qsizetype(items.size()); ++i) {
+        const auto &item = items[size_t(i)];
+        if (i >= layout.placed) {
+            if (!build) {
+                // Too small now, a rebuild would drop it.
+                collapseTreemap(item.segment, layout.remainder.center());
+                changed = true;
+            }
+            continue;
         }
+
+        Segment *child = item.segment;
+        if (build) {
+            if (budget <= 0) {
+                break;
+            }
+            --budget;
+            child = new Segment(item.file, item.start, item.length);
+            m_signature[childDepth].append(child);
+            segment->m_children.append(child);
+            if (const auto childFolder = std::dynamic_pointer_cast<Folder>(item.file)) {
+                // Whether the folder could show children in a larger view.
+                const bool hasLargeChildren = std::any_of(childFolder->files.cbegin(), childFolder->files.cend(), [minimumSize](const auto &file) {
+                    return file->size() >= minimumSize;
+                });
+                child->m_treemapExpandable = childDepth < m_visibleDepth && hasLargeChildren;
+                child->m_hasHiddenChildren = !childFolder->files.isEmpty();
+            }
+        }
+        placedSize += item.file->size();
+        changed |= placeTreemap(child, separate(layout.rects[i]), childDepth + 1, build, minimumSize, budget);
     }
+
+    if (build) {
+        // The largest item left out only because it was too small for this view.
+        segment->m_treemapLargestHidden = layout.placed < weights.size() ? FileSize(weights[layout.placed]) : 0;
+        segment->m_hasHiddenChildren = segment->m_children.size() < folder->files.size();
+    } else if (segment->m_treemapLargestHidden > 0) {
+        // A rebuild would show the largest hidden item if it fits now.
+        const qreal areaPerByte = content.width() * content.height() / qreal(size);
+        changed |= qreal(segment->m_treemapLargestHidden) * areaPerByte >= minimumArea;
+    }
+
     const qreal remainderSize = qreal(size - std::min(placedSize, size));
     const QRectF remainderRect = remainderSize > 0 ? separate(layout.remainder).translated(-rect.topLeft()) : QRectF();
-    segment->setTreemapGeometry(rect, style.headerHeight, true, remainderRect, remainderSize);
+    segment->setTreemapGeometry(rect, m_treemapHeaderHeight, true, remainderRect, remainderSize);
+    return changed;
 }
-} // namespace
 
 void RadialMap::Map::layoutTreemap(qreal width, qreal height, qreal headerHeight, qreal padding, qreal spacing)
 {
-    if (!m_root || Config::instance()->mapStyle != Filelight::Treemap) {
+    if (!m_root || Config::instance()->mapStyle != Filelight::Treemap || width <= 0 || height <= 0) {
         return;
     }
 
-    // Rebuild if the view changed enough for considerably more or fewer items to fit.
+    const bool styleChanged = headerHeight != m_treemapHeaderHeight || padding != m_treemapPadding || spacing != m_treemapSpacing;
+    m_treemapHeaderHeight = headerHeight;
+    m_treemapPadding = padding;
+    m_treemapSpacing = spacing;
+    m_treemapSize = QSizeF(width, height);
+
+    // Rebuild right away if there is nothing usable yet, e.g. when the view first appears or is maximized.
     const qreal area = width * height;
-    const qreal builtArea = m_treemapSize.width() * m_treemapSize.height();
-    if (area > 0 && (builtArea <= 0 || area > builtArea * 1.5 || area < builtArea / 1.5)) {
-        m_treemapSize = QSizeF(width, height);
+    const qreal builtArea = m_treemapBuiltSize.width() * m_treemapBuiltSize.height();
+    if (styleChanged || builtArea <= 0 || area > builtArea * 1.5 || area < builtArea / 1.5) {
         make(m_root, true);
+        return;
     }
 
     if (!m_rootSegment || isNull()) {
         return;
     }
-    ::layoutTreemap(m_rootSegment.get(), QRectF(0, 0, width, height), TreemapStyle{headerHeight, padding, spacing});
+    // Otherwise move the existing tiles and only rebuild once resizing settled, if that would show different tiles.
+    int budget = 0;
+    const bool changed = placeTreemap(m_rootSegment.get(), QRectF(0, 0, width, height), 0, false, 0, budget);
+    if (changed) {
+        m_treemapRebuildTimer.start();
+    }
 }
 
 RadialMap::Map *RadialMap::Map::create(QQmlEngine *qml, QJSEngine *js)

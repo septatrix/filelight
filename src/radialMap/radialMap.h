@@ -198,6 +198,10 @@ private:
     bool m_treemapContainer = false;
     QRectF m_treemapRemainderRect;
     qreal m_treemapRemainderSize = 0;
+    // What the treemap left out when building this segment's children,
+    // to tell whether a larger view would show more of them.
+    FileSize m_treemapLargestHidden = 0;
+    bool m_treemapExpandable = false;
     const bool m_fake;
     const QString m_uuid;
 };
